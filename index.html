@@ -497,6 +497,7 @@ const {
   useCallback
 } = React;
 const CATEGORIES = ['Tops', 'Bottoms', 'Dresses', 'Jumpsuits', 'Outerwear', 'Shoes', 'Accessories', 'Bags', 'Activewear', 'Swimwear', 'Other'];
+const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'O/S', 'N/A'];
 const CAT_EMOJI = {
   Tops: '👕',
   Bottoms: '👖',
@@ -743,7 +744,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const APP_VERSION = 'v1.3 · 2026-06-18 · receipt→closet';
+const APP_VERSION = 'v1.5 · 2026-06-18 · item-size';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1039,6 +1040,7 @@ const AddItemModal = ({
     name: base.name || '',
     category: base.category || '',
     color: base.color || '',
+    size: base.size || '',
     brand: base.brand || '',
     material: base.material || '',
     occasions: base.occasions || [],
@@ -1050,6 +1052,7 @@ const AddItemModal = ({
     name: '',
     category: '',
     color: '',
+    size: '',
     brand: '',
     material: '',
     occasions: [],
@@ -1370,6 +1373,20 @@ const AddItemModal = ({
     className: "input-group"
   }, /*#__PURE__*/React.createElement("label", {
     className: "input-label"
+  }, "Size"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 8
+    }
+  }, SIZES.map(s => /*#__PURE__*/React.createElement("button", {
+    key: s,
+    className: 'chip' + (form.size === s ? ' active' : ''),
+    onClick: () => set('size', form.size === s ? '' : s)
+  }, s)))), /*#__PURE__*/React.createElement("div", {
+    className: "input-group"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "input-label"
   }, "Brand / Store"), /*#__PURE__*/React.createElement("input", {
     className: "input",
     placeholder: "e.g. Zara, thrifted, vintage...",
@@ -1637,7 +1654,7 @@ const ItemDetail = ({
       padding: '4px 16px',
       marginBottom: 20
     }
-  }, [['Condition', item.condition], ['Material', item.material || '—'], ['Price Paid', item.price ? '$' + item.price : '—'], ['Cost per Wear', cpw], ['Times Worn', item.timesWorn || 0], ['Last Worn', item.lastWorn ? new Date(item.lastWorn).toLocaleDateString() : 'Never'], ['Date Added', new Date(item.dateAdded).toLocaleDateString()]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Size', item.size || '—'], ['Condition', item.condition], ['Material', item.material || '—'], ['Price Paid', item.price ? '$' + item.price : '—'], ['Cost per Wear', cpw], ['Times Worn', item.timesWorn || 0], ['Last Worn', item.lastWorn ? new Date(item.lastWorn).toLocaleDateString() : 'Never'], ['Date Added', new Date(item.dateAdded).toLocaleDateString()]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
     key: l,
     className: "detail-row"
   }, /*#__PURE__*/React.createElement("span", {
@@ -7279,7 +7296,7 @@ const ReceiptsScreen = ({ onBack }) => {
         total: (parsed.total != null && parsed.total !== '') ? String(parsed.total) : '',
         currency: parsed.currency || 'USD',
         category: RECEIPT_CATEGORIES.indexOf(parsed.category) >= 0 ? parsed.category : 'Clothing',
-        items: Array.isArray(parsed.items) ? parsed.items : [],
+        items: Array.isArray(parsed.items) ? parsed.items.map(it => ({ name: it.name || 'Item', price: it.price, selected: true })) : [],
         image: dataUrl,
         createdAt: new Date().toISOString()
       });
@@ -7291,13 +7308,15 @@ const ReceiptsScreen = ({ onBack }) => {
   };
 
   const setD = (k, v) => setDraft(d => ({ ...d, [k]: v }));
+  const toggleItem = idx => setDraft(d => ({ ...d, items: d.items.map((it, i) => i === idx ? { ...it, selected: it.selected === false } : it) }));
 
   const saveDraft = async () => {
     if (!draft) return;
     setBusy(true);
     setErr('');
     try {
-      await dbPut('receipts', Object.assign({}, draft, { total: parseFloat(draft.total) || 0 }));
+      const keptItems = (draft.items || []).filter(it => it.selected !== false).map(it => ({ name: it.name, price: it.price }));
+      await dbPut('receipts', Object.assign({}, draft, { total: parseFloat(draft.total) || 0, items: keptItems }));
       setDraft(null);
       setStage('list');
       load();
@@ -7335,10 +7354,14 @@ const ReceiptsScreen = ({ onBack }) => {
       /*#__PURE__*/React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
         RECEIPT_CATEGORIES.map(c => /*#__PURE__*/React.createElement('button', { key: c, className: 'chip' + (draft && draft.category === c ? ' active' : ''), onClick: () => setD('category', c) }, c)))),
     draft && draft.items && draft.items.length > 0 && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '10px 14px', marginBottom: 16 } },
-      /*#__PURE__*/React.createElement('div', { className: 'label', style: { marginBottom: 6 } }, 'Items'),
-      draft.items.slice(0, 25).map((it, idx) => /*#__PURE__*/React.createElement('div', { key: idx, style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', padding: '3px 0' } },
-        /*#__PURE__*/React.createElement('span', null, it.name || 'Item'),
-        /*#__PURE__*/React.createElement('span', { style: { color: 'var(--brown-light)' } }, (it.price != null && it.price !== '') ? ('$' + it.price) : '')))),
+      /*#__PURE__*/React.createElement('div', { className: 'label', style: { marginBottom: 6 } }, 'Items — tap to include only what’s yours'),
+      draft.items.slice(0, 40).map((it, idx) => /*#__PURE__*/React.createElement('div', { key: idx, onClick: () => toggleItem(idx), style: { display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.84rem', padding: '7px 2px', cursor: 'pointer', borderBottom: '1px solid var(--border-light)', opacity: it.selected === false ? 0.4 : 1 } },
+        /*#__PURE__*/React.createElement('div', { style: { width: 20, height: 20, borderRadius: 6, flexShrink: 0, border: '1.5px solid ' + (it.selected === false ? 'var(--border)' : 'var(--pink-deep)'), background: it.selected === false ? 'transparent' : 'var(--pink-deep)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 } }, it.selected === false ? '' : '✓'),
+        /*#__PURE__*/React.createElement('span', { style: { flex: 1, textDecoration: it.selected === false ? 'line-through' : 'none' } }, it.name || 'Item'),
+        /*#__PURE__*/React.createElement('span', { style: { color: 'var(--brown-light)' } }, (it.price != null && it.price !== '') ? ('$' + it.price) : ''))),
+      (() => { const sub = draft.items.filter(it => it.selected !== false).reduce((s, it) => s + (parseFloat(it.price) || 0), 0); return sub > 0 && /*#__PURE__*/React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8 } },
+        /*#__PURE__*/React.createElement('span', { style: { fontSize: '0.84rem', fontWeight: 600 } }, 'Selected: $' + sub.toFixed(2)),
+        /*#__PURE__*/React.createElement('button', { className: 'chip sm', onClick: () => setD('total', sub.toFixed(2)) }, 'Use as total')); })()),
     /*#__PURE__*/React.createElement('button', { className: 'btn-primary', style: { width: '100%', marginBottom: 10 }, onClick: saveDraft, disabled: busy }, busy ? 'Saving…' : 'Save Receipt'),
     /*#__PURE__*/React.createElement('button', { className: 'btn-secondary', style: { width: '100%' }, onClick: () => { setStage('list'); setDraft(null); setErr(''); } }, 'Cancel')
   );
@@ -7377,7 +7400,7 @@ const ReceiptsScreen = ({ onBack }) => {
         /*#__PURE__*/React.createElement(Icon, { name: 'arrowLeft', size: 20, color: 'var(--brown-mid)' })),
       /*#__PURE__*/React.createElement('span', { style: { fontWeight: 600, fontSize: '1rem', flex: 1 } }, stage === 'review' ? 'Review Receipt 🧾' : 'Receipts 🧾')),
     /*#__PURE__*/React.createElement('input', { ref: fileRef, type: 'file', accept: 'image/*', style: { display: 'none' }, onChange: onPick }),
-    /*#__PURE__*/React.createElement('div', { className: 'px', style: { paddingTop: 16 } },
+    /*#__PURE__*/React.createElement('div', { className: 'px', style: { paddingTop: 16, paddingBottom: 'calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 40px)' } },
       err && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '12px 14px', marginBottom: 14, background: 'var(--pink-pale)', border: '1px solid var(--pink-light)', color: 'var(--brown-dark)', fontSize: '0.84rem', lineHeight: 1.45 } }, err),
       busy && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 } },
         /*#__PURE__*/React.createElement('div', { className: 'spinner' }),
