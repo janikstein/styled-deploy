@@ -498,6 +498,24 @@ const {
 } = React;
 const CATEGORIES = ['Tops', 'Bottoms', 'Dresses', 'Jumpsuits', 'Outerwear', 'Shoes', 'Accessories', 'Bags', 'Activewear', 'Swimwear', 'Other'];
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'O/S', 'N/A'];
+const SIZE_LETTERS = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+const SIZE_WAIST = ['23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34'];
+const SHOE_SIZES = ['5', '5.5', '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10', '11'];
+const FIT_OPTIONS = ['Fits', 'Too small', 'Too big', 'Tight', 'Loose'];
+// Which preset list + size-profile field a category maps to.
+const sizePresetsFor = cat => {
+  if (cat === 'Shoes') return SHOE_SIZES.concat(['N/A']);
+  if (cat === 'Bottoms' || cat === 'Jumpsuits') return SIZE_WAIST.concat(['O/S', 'N/A']);
+  return SIZE_LETTERS.concat(['O/S', 'N/A']);
+};
+const profileSizeFor = (cat, profile) => {
+  if (!profile) return '';
+  if (cat === 'Shoes') return profile.shoe || '';
+  if (cat === 'Bottoms' || cat === 'Jumpsuits') return profile.bottom || '';
+  if (cat === 'Dresses') return profile.dress || profile.top || '';
+  return profile.top || '';
+};
+const getSizeProfile = () => { try { return JSON.parse(localStorage.getItem('styled_size_profile') || '{}'); } catch (e) { return {}; } };
 const CAT_EMOJI = {
   Tops: '👕',
   Bottoms: '👖',
@@ -744,7 +762,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const APP_VERSION = 'v1.5 · 2026-06-18 · item-size';
+const APP_VERSION = 'v1.6 · 2026-06-18 · size-profile+fit';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1030,6 +1048,7 @@ const AddItemModal = ({
   // `base` seeds the form for either an edit (editItem) or a pre-filled new item (prefill,
   // e.g. created from a receipt). Saving still keys off editItem, so a prefill becomes a NEW item.
   const base = editItem || prefill;
+  const sizeProfile = getSizeProfile();
   const [step, setStep] = useState(base ? 2 : 1);
   const [imageDataURL, setImageDataURL] = useState(base?.image || null);
   const [bgRemoving, setBgRemoving] = useState(false);
@@ -1041,6 +1060,7 @@ const AddItemModal = ({
     category: base.category || '',
     color: base.color || '',
     size: base.size || '',
+    fit: base.fit || '',
     brand: base.brand || '',
     material: base.material || '',
     occasions: base.occasions || [],
@@ -1053,6 +1073,7 @@ const AddItemModal = ({
     category: '',
     color: '',
     size: '',
+    fit: '',
     brand: '',
     material: '',
     occasions: [],
@@ -1067,6 +1088,10 @@ const AddItemModal = ({
     [k]: v
   }));
   const toggleArr = (k, v) => set(k, form[k].includes(v) ? form[k].filter(x => x !== v) : [...form[k], v]);
+  const pickCategory = c => setForm(f => {
+    const ps = profileSizeFor(c, sizeProfile);
+    return { ...f, category: c, size: f.size ? f.size : (ps || '') };
+  });
   const handleFile = async e => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1350,7 +1375,7 @@ const AddItemModal = ({
   }, CATEGORIES.map(c => /*#__PURE__*/React.createElement("button", {
     key: c,
     className: 'chip' + (form.category === c ? ' active' : ''),
-    onClick: () => set('category', c)
+    onClick: () => pickCategory(c)
   }, CAT_EMOJI[c], " ", c)))), /*#__PURE__*/React.createElement("div", {
     className: "input-group"
   }, /*#__PURE__*/React.createElement("label", {
@@ -1379,10 +1404,32 @@ const AddItemModal = ({
       flexWrap: 'wrap',
       gap: 8
     }
-  }, SIZES.map(s => /*#__PURE__*/React.createElement("button", {
+  }, sizePresetsFor(form.category).map(s => /*#__PURE__*/React.createElement("button", {
     key: s,
     className: 'chip' + (form.size === s ? ' active' : ''),
     onClick: () => set('size', form.size === s ? '' : s)
+  }, s))), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      marginTop: 8
+    },
+    placeholder: (form.category === 'Bottoms' || form.category === 'Jumpsuits' || form.category === 'Shoes') ? 'or type your number (e.g. 27)' : 'or type a size',
+    value: form.size,
+    onChange: e => set('size', e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "input-group"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "input-label"
+  }, "Fit"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 8
+    }
+  }, FIT_OPTIONS.map(s => /*#__PURE__*/React.createElement("button", {
+    key: s,
+    className: 'chip' + (form.fit === s ? ' active' : ''),
+    onClick: () => set('fit', form.fit === s ? '' : s)
   }, s)))), /*#__PURE__*/React.createElement("div", {
     className: "input-group"
   }, /*#__PURE__*/React.createElement("label", {
@@ -1654,7 +1701,7 @@ const ItemDetail = ({
       padding: '4px 16px',
       marginBottom: 20
     }
-  }, [['Size', item.size || '—'], ['Condition', item.condition], ['Material', item.material || '—'], ['Price Paid', item.price ? '$' + item.price : '—'], ['Cost per Wear', cpw], ['Times Worn', item.timesWorn || 0], ['Last Worn', item.lastWorn ? new Date(item.lastWorn).toLocaleDateString() : 'Never'], ['Date Added', new Date(item.dateAdded).toLocaleDateString()]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Size', item.size || '—'], ['Fit', item.fit || '—'], ['Condition', item.condition], ['Material', item.material || '—'], ['Price Paid', item.price ? '$' + item.price : '—'], ['Cost per Wear', cpw], ['Times Worn', item.timesWorn || 0], ['Last Worn', item.lastWorn ? new Date(item.lastWorn).toLocaleDateString() : 'Never'], ['Date Added', new Date(item.dateAdded).toLocaleDateString()]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
     key: l,
     className: "detail-row"
   }, /*#__PURE__*/React.createElement("span", {
@@ -6499,7 +6546,11 @@ const ProfileScreen = ({
     size: 16,
     color: "var(--brown-light)"
   })), /*#__PURE__*/React.createElement("div", {
-    className: "settings-row"
+    className: "settings-row",
+    onClick: () => onNav && onNav('sizeprofile'),
+    style: {
+      cursor: 'pointer'
+    }
   }, /*#__PURE__*/React.createElement("div", {
     className: "row-left"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6508,7 +6559,7 @@ const ProfileScreen = ({
     className: "row-title"
   }, "Size Profile"), /*#__PURE__*/React.createElement("div", {
     className: "row-subtitle"
-  }, "Help AI recommend better fits"))), /*#__PURE__*/React.createElement(Icon, {
+  }, "Save your sizes — auto-fills new items"))), /*#__PURE__*/React.createElement(Icon, {
     name: "chevronRight",
     size: 16,
     color: "var(--brown-light)"
@@ -7241,6 +7292,33 @@ const MigrateButton = () => {
     disabled: status === 'migrating'
   }, status === 'idle' ? 'Import' : status === 'migrating' ? 'Moving...' : status === 'done' ? '✓ Done' : 'Error'));
 };
+// ── Size Profile Screen ────────────────────────────────────────────────────
+const SizeProfileScreen = ({ onBack }) => {
+  const [p, setP] = useState(getSizeProfile());
+  const [saved, setSaved] = useState(false);
+  const setField = (k, v) => { setSaved(false); setP(prev => Object.assign({}, prev, { [k]: v })); };
+  const save = () => { localStorage.setItem('styled_size_profile', JSON.stringify(p)); setSaved(true); };
+  const field = (key, label, ph) => /*#__PURE__*/React.createElement('div', { className: 'input-group' },
+    /*#__PURE__*/React.createElement('label', { className: 'input-label' }, label),
+    /*#__PURE__*/React.createElement('input', { className: 'input', value: p[key] || '', placeholder: ph, onChange: e => setField(key, e.target.value) }));
+  return /*#__PURE__*/React.createElement('div', { className: 'screen animate-in', style: { paddingTop: 56 } },
+    /*#__PURE__*/React.createElement('div', { style: { position: 'sticky', top: 0, zIndex: 90, background: 'rgba(250,247,242,0.95)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border-light)' } },
+      /*#__PURE__*/React.createElement('button', { className: 'btn-ghost', onClick: onBack }, /*#__PURE__*/React.createElement(Icon, { name: 'arrowLeft', size: 20, color: 'var(--brown-mid)' })),
+      /*#__PURE__*/React.createElement('span', { style: { fontWeight: 600, fontSize: '1rem', flex: 1 } }, 'My Sizes 📏')),
+    /*#__PURE__*/React.createElement('div', { className: 'px', style: { paddingTop: 16, paddingBottom: 'calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 40px)' } },
+      /*#__PURE__*/React.createElement('p', { className: 'caption', style: { marginBottom: 16, lineHeight: 1.5 } }, 'Save your sizes once — STYLED auto-fills them when you add a new piece, so you don’t have to remember.'),
+      field('top', 'Tops / Outerwear (letter)', 'e.g. M'),
+      field('bottom', 'Jeans / Bottoms (number)', 'e.g. 27'),
+      field('dress', 'Dresses (if different)', 'e.g. 6 or M'),
+      field('shoe', 'Shoes', 'e.g. 8.5'),
+      field('bra', 'Bra / Intimates (optional)', 'e.g. 34B'),
+      /*#__PURE__*/React.createElement('div', { className: 'input-group' },
+        /*#__PURE__*/React.createElement('label', { className: 'input-label' }, 'Notes'),
+        /*#__PURE__*/React.createElement('textarea', { className: 'input', style: { minHeight: 72, resize: 'vertical' }, value: p.notes || '', placeholder: 'Fit preferences, brands that run small/large, measurements…', onChange: e => setField('notes', e.target.value) })),
+      /*#__PURE__*/React.createElement('button', { className: 'btn-primary', style: { width: '100%' }, onClick: save }, saved ? 'Saved ✓' : 'Save My Sizes'))
+  );
+};
+
 // ── Receipts Screen ────────────────────────────────────────────────────────
 const RECEIPT_CATEGORIES = ['Clothing', 'Shoes', 'Accessories', 'Beauty', 'Other'];
 const RECEIPT_TO_WARDROBE_CAT = { Shoes: 'Shoes', Accessories: 'Accessories', Clothing: 'Tops', Beauty: 'Other', Other: 'Other' };
@@ -7474,6 +7552,9 @@ const App = () => {
       onBack: () => setScreen('profile')
     }),
     receipts: /*#__PURE__*/React.createElement(ReceiptsScreen, {
+      onBack: () => setScreen('profile')
+    }),
+    sizeprofile: /*#__PURE__*/React.createElement(SizeProfileScreen, {
       onBack: () => setScreen('profile')
     })
   };
