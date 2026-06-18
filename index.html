@@ -165,7 +165,14 @@
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/dist/background-removal.js"></script>
+  <script type="module">
+    // @imgly/background-removal is an ES module (default export = removeBackground).
+    // Loading it as a classic <script> never created window.BackgroundRemoval, which
+    // is why background removal failed every time. Import it and expose it instead.
+    import removeBackground from "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm";
+    window.imglyRemoveBackground = removeBackground;
+    window.__imglyReady = true;
+  </script>
 </head>
 <body>
 <div id="app"><div style="padding:24px;font-family:sans-serif;color:#888">Starting STYLED...</div></div>
@@ -1056,10 +1063,13 @@ const AddItemModal = ({
     if (!imageDataURL || bgRemoving) return;
     setBgRemoving(true);
     try {
+      const removeBg = window.imglyRemoveBackground;
+      if (!removeBg) throw new Error('Still loading the background remover — give it a few seconds and tap again.');
       const res = await fetch(imageDataURL);
       const blob = await res.blob();
-      const resultBlob = await window.BackgroundRemoval.removeBackground(blob, {
-        model: 'small'
+      const resultBlob = await removeBg(blob, {
+        model: 'small',
+        output: { format: 'image/png' }
       });
       // Composite onto chosen background color
       const img = new Image();
@@ -1077,7 +1087,9 @@ const AddItemModal = ({
       setImageDataURL(canvas.toDataURL('image/jpeg', 0.92));
       setBgRemoved(true);
     } catch (e) {
-      alert('Background removal failed — try again or use a clearer photo.');
+      const msg = (e && e.message) ? e.message : String(e);
+      alert('Background removal failed: ' + msg + '\n\nThe first use downloads a ~40MB model, so a strong connection helps. Try again in a moment.');
+      console.error('[bg-removal]', e);
     }
     setBgRemoving(false);
   };
