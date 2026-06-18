@@ -743,7 +743,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const APP_VERSION = 'v1.2 · 2026-06-18 · bg-loader';
+const APP_VERSION = 'v1.3 · 2026-06-18 · receipt→closet';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1023,25 +1023,29 @@ const BG_COLORS = [{
 const AddItemModal = ({
   onClose,
   onSaved,
-  editItem
+  editItem,
+  prefill
 }) => {
-  const [step, setStep] = useState(editItem ? 2 : 1);
-  const [imageDataURL, setImageDataURL] = useState(editItem?.image || null);
+  // `base` seeds the form for either an edit (editItem) or a pre-filled new item (prefill,
+  // e.g. created from a receipt). Saving still keys off editItem, so a prefill becomes a NEW item.
+  const base = editItem || prefill;
+  const [step, setStep] = useState(base ? 2 : 1);
+  const [imageDataURL, setImageDataURL] = useState(base?.image || null);
   const [bgRemoving, setBgRemoving] = useState(false);
   const [bgRemoved, setBgRemoved] = useState(false);
   const [bgColor, setBgColor] = useState('#FFFFFF');
   const fileRef = useRef(null);
-  const [form, setForm] = useState(editItem ? {
-    name: editItem.name || '',
-    category: editItem.category || '',
-    color: editItem.color || '',
-    brand: editItem.brand || '',
-    material: editItem.material || '',
-    occasions: editItem.occasions || [],
-    seasons: editItem.seasons || ['All Season'],
-    condition: editItem.condition || 'Good',
-    price: editItem.price || '',
-    fitNotes: editItem.fitNotes || ''
+  const [form, setForm] = useState(base ? {
+    name: base.name || '',
+    category: base.category || '',
+    color: base.color || '',
+    brand: base.brand || '',
+    material: base.material || '',
+    occasions: base.occasions || [],
+    seasons: base.seasons || ['All Season'],
+    condition: base.condition || 'Good',
+    price: base.price || '',
+    fitNotes: base.fitNotes || ''
   } : {
     name: '',
     category: '',
@@ -7222,6 +7226,7 @@ const MigrateButton = () => {
 };
 // ── Receipts Screen ────────────────────────────────────────────────────────
 const RECEIPT_CATEGORIES = ['Clothing', 'Shoes', 'Accessories', 'Beauty', 'Other'];
+const RECEIPT_TO_WARDROBE_CAT = { Shoes: 'Shoes', Accessories: 'Accessories', Clothing: 'Tops', Beauty: 'Other', Other: 'Other' };
 const ReceiptsScreen = ({ onBack }) => {
   const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -7229,7 +7234,16 @@ const ReceiptsScreen = ({ onBack }) => {
   const [stage, setStage] = useState('list');
   const [draft, setDraft] = useState(null);
   const [err, setErr] = useState('');
+  const [toWardrobe, setToWardrobe] = useState(null);
   const fileRef = useRef(null);
+
+  const addToWardrobe = r => setToWardrobe({
+    image: r.image || null,
+    name: r.store ? (r.store + ' purchase') : '',
+    brand: r.store || '',
+    price: (r.total != null && r.total !== '') ? String(r.total) : '',
+    category: RECEIPT_TO_WARDROBE_CAT[r.category] || ''
+  });
 
   const load = () => {
     setLoading(true);
@@ -7353,6 +7367,7 @@ const ReceiptsScreen = ({ onBack }) => {
             /*#__PURE__*/React.createElement('div', { className: 'caption' }, (r.date || (r.createdAt || '').slice(0, 10)) + (r.category ? ' · ' + r.category : ''))),
           /*#__PURE__*/React.createElement('div', { style: { textAlign: 'right', flexShrink: 0 } },
             /*#__PURE__*/React.createElement('div', { style: { fontWeight: 600, fontSize: '0.95rem' } }, '$' + (parseFloat(r.total) || 0).toFixed(2)),
+            /*#__PURE__*/React.createElement('button', { className: 'btn-ghost', style: { fontSize: '0.7rem', color: 'var(--pink-deep)', padding: '2px 4px', fontWeight: 600 }, onClick: () => addToWardrobe(r) }, '+ Closet'),
             /*#__PURE__*/React.createElement('button', { className: 'btn-ghost', style: { fontSize: '0.7rem', color: 'var(--brown-light)', padding: '2px 4px' }, onClick: () => removeReceipt(r) }, 'Delete')))))
   );
 
@@ -7367,7 +7382,8 @@ const ReceiptsScreen = ({ onBack }) => {
       busy && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 } },
         /*#__PURE__*/React.createElement('div', { className: 'spinner' }),
         /*#__PURE__*/React.createElement('span', { className: 'body-sm' }, stage === 'review' ? 'Saving…' : 'Reading your receipt…')),
-      (stage === 'review' && draft) ? review : list)
+      (stage === 'review' && draft) ? review : list),
+    toWardrobe && /*#__PURE__*/React.createElement(AddItemModal, { prefill: toWardrobe, onClose: () => setToWardrobe(null), onSaved: () => setToWardrobe(null) })
   );
 };
 
