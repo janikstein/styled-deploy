@@ -166,19 +166,28 @@
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script type="module">
-    // @imgly/background-removal is an ES module. esm.sh serves it as a browser-ready
-    // bundle (with its worker/wasm deps) far more reliably than jsDelivr's +esm flattening.
-    // Warm it up on page load and record any load failure so the UI can report the real reason.
-    (async () => {
-      try {
-        const mod = await import("https://esm.sh/@imgly/background-removal@1.4.5");
-        window.imglyRemoveBackground = mod.default || mod.removeBackground;
-        window.__imglyReady = true;
-      } catch (e) {
-        window.__imglyError = (e && e.message) ? e.message : String(e);
-        console.error('[imgly preload failed]', e);
+    // @imgly/background-removal is an ES module loaded from a CDN. Any single CDN can be
+    // down or slow intermittently, which made background removal "stop working" at random.
+    // Try several CDNs in order so a hiccup on one doesn't break the feature.
+    window.__loadImgly = async () => {
+      if (typeof window.imglyRemoveBackground === 'function') return window.imglyRemoveBackground;
+      const urls = [
+        "https://esm.sh/@imgly/background-removal@1.4.5",
+        "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm",
+        "https://unpkg.com/@imgly/background-removal@1.4.5?module"
+      ];
+      let lastErr;
+      for (const u of urls) {
+        try {
+          const mod = await import(u);
+          const fn = mod.default || mod.removeBackground;
+          if (typeof fn === 'function') { window.imglyRemoveBackground = fn; window.__imglyReady = true; return fn; }
+        } catch (e) { lastErr = e; }
       }
-    })();
+      throw lastErr || new Error('All background-remover sources failed to load.');
+    };
+    // Warm it up on page load; record any failure so the UI can show the real reason.
+    window.__loadImgly().catch(e => { window.__imglyError = (e && e.message) ? e.message : String(e); console.error('[imgly preload failed]', e); });
   </script>
 </head>
 <body>
@@ -762,7 +771,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const APP_VERSION = 'v1.6 · 2026-06-18 · size-profile+fit';
+const APP_VERSION = 'v1.7 · 2026-06-18 · bg-multicdn';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1106,11 +1115,9 @@ const AddItemModal = ({
     try {
       let removeBg = window.imglyRemoveBackground;
       if (typeof removeBg !== 'function') {
-        // Load it on demand if the page-load warm-up hasn't finished (or failed).
+        // Load on demand, trying each CDN, if the page-load warm-up hasn't finished (or failed).
         try {
-          const mod = await import('https://esm.sh/@imgly/background-removal@1.4.5');
-          removeBg = mod.default || mod.removeBackground;
-          window.imglyRemoveBackground = removeBg;
+          removeBg = await window.__loadImgly();
         } catch (impErr) {
           throw new Error('Could not load the background remover — ' + ((impErr && impErr.message) || impErr));
         }
