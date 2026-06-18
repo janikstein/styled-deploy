@@ -594,7 +594,8 @@ const STORE_TABLE = {
   items: 'items',
   outfits: 'outfits',
   packingLists: 'packing_lists',
-  wishlist: 'wishlist'
+  wishlist: 'wishlist',
+  receipts: 'receipts'
 };
 const dbGetAll = async store => {
   const tbl = STORE_TABLE[store] || store;
@@ -735,6 +736,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const APP_VERSION = 'v1.1 · 2026-06-18 · receipts';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -4358,15 +4360,17 @@ const SpendTrackerScreen = ({
 }) => {
   const [items, setItems] = useState([]);
   const [wishlist, setWishlist] = useState([]);
+  const [receipts, setReceipts] = useState([]);
   const [budget, setBudget] = useState('');
   const [editBudget, setEditBudget] = useState(false);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     const b = localStorage.getItem('styled_monthly_budget');
     if (b) setBudget(b);
-    Promise.all([dbGetAll('items'), dbGetAll('wishlist')]).then(([it, wi]) => {
+    Promise.all([dbGetAll('items'), dbGetAll('wishlist'), dbGetAll('receipts')]).then(([it, wi, rc]) => {
       setItems(it);
       setWishlist(wi);
+      setReceipts(rc);
       setLoading(false);
     });
   }, []);
@@ -4384,12 +4388,14 @@ const SpendTrackerScreen = ({
     const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     const label = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
     const monthItems = items.filter(it => it.dateAdded && it.dateAdded.startsWith(key));
-    const spend = monthItems.reduce((s, it) => s + (parseFloat(it.price) || 0), 0);
+    const monthReceipts = receipts.filter(r => (r.date || r.createdAt || '').startsWith(key));
+    const receiptSpend = monthReceipts.reduce((s, r) => s + (parseFloat(r.total) || 0), 0);
+    const spend = monthItems.reduce((s, it) => s + (parseFloat(it.price) || 0), 0) + receiptSpend;
     return {
       key,
       label,
       spend,
-      count: monthItems.length
+      count: monthItems.length + monthReceipts.length
     };
   });
   const maxSpend = Math.max(...months.map(m => m.spend), 1);
@@ -6592,6 +6598,24 @@ const ProfileScreen = ({
     name: "chevronRight",
     size: 16,
     color: "var(--brown-light)"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "settings-row",
+    onClick: () => onNav && onNav('receipts'),
+    style: {
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row-left"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row-icon"
+  }, "🧾"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "row-title"
+  }, "Receipts"), /*#__PURE__*/React.createElement("div", {
+    className: "row-subtitle"
+  }, "Scan & auto-track purchases"))), /*#__PURE__*/React.createElement(Icon, {
+    name: "chevronRight",
+    size: 16,
+    color: "var(--brown-light)"
   }))), /*#__PURE__*/React.createElement(MigrateButton, null), /*#__PURE__*/React.createElement("button", {
     className: "btn-secondary",
     style: {
@@ -6605,7 +6629,7 @@ const ProfileScreen = ({
       textAlign: 'center',
       marginBottom: 32
     }
-  }, "STYLED ✨ · Built just for you"));
+  }, "STYLED ✨ · Built just for you · " + APP_VERSION));
 };
 
 // ── Notifications Panel ────────────────────────────────────────────────────
@@ -7177,6 +7201,157 @@ const MigrateButton = () => {
     disabled: status === 'migrating'
   }, status === 'idle' ? 'Import' : status === 'migrating' ? 'Moving...' : status === 'done' ? '✓ Done' : 'Error'));
 };
+// ── Receipts Screen ────────────────────────────────────────────────────────
+const RECEIPT_CATEGORIES = ['Clothing', 'Shoes', 'Accessories', 'Beauty', 'Other'];
+const ReceiptsScreen = ({ onBack }) => {
+  const [receipts, setReceipts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState('list');
+  const [draft, setDraft] = useState(null);
+  const [err, setErr] = useState('');
+  const fileRef = useRef(null);
+
+  const load = () => {
+    setLoading(true);
+    dbGetAll('receipts').then(rc => {
+      rc.sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
+      setReceipts(rc);
+      setLoading(false);
+    });
+  };
+  useEffect(load, []);
+
+  const onPick = async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setErr('');
+    setBusy(true);
+    try {
+      const dataUrl = await compressImage(file, 1400);
+      const b64 = dataUrl.split(',')[1];
+      const messages = [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: 'Extract the purchase details from this receipt. Return ONLY a JSON object (no markdown) with keys: store (merchant/brand name), date (YYYY-MM-DD purchase date, or empty if unreadable), total (number, the final amount paid), currency (e.g. "USD"), category (one of Clothing, Shoes, Accessories, Beauty, Other), items (array of {name, price}). Use empty string or 0 when unknown.' }
+      ] }];
+      const text = await callClaude(messages, 'You are a precise receipt-parsing assistant. Output only valid minified JSON.', 700);
+      let parsed = {};
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) { try { parsed = JSON.parse(match[0]); } catch (_) { parsed = {}; } }
+      setDraft({
+        id: uid(),
+        store: parsed.store || '',
+        date: parsed.date || new Date().toISOString().slice(0, 10),
+        total: (parsed.total != null && parsed.total !== '') ? String(parsed.total) : '',
+        currency: parsed.currency || 'USD',
+        category: RECEIPT_CATEGORIES.indexOf(parsed.category) >= 0 ? parsed.category : 'Clothing',
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+        image: dataUrl,
+        createdAt: new Date().toISOString()
+      });
+      setStage('review');
+    } catch (e2) {
+      setErr(e2.message === 'NO_KEY' ? 'Add your Claude API key in Profile to scan receipts.' : ('Could not read receipt: ' + (e2.message || e2)));
+    }
+    setBusy(false);
+  };
+
+  const setD = (k, v) => setDraft(d => ({ ...d, [k]: v }));
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await dbPut('receipts', Object.assign({}, draft, { total: parseFloat(draft.total) || 0 }));
+      setDraft(null);
+      setStage('list');
+      load();
+    } catch (e3) {
+      const m = (e3 && e3.message) ? e3.message : String(e3);
+      setErr(/relation|does not exist|table|schema|not find/i.test(m) ? 'The "receipts" table does not exist in Supabase yet. Run the quick SQL setup (ask Claude for it), then try saving again.' : ('Could not save: ' + m));
+    }
+    setBusy(false);
+  };
+
+  const removeReceipt = async r => {
+    if (!window.confirm('Delete this receipt?')) return;
+    try { await dbDelete('receipts', r.id); load(); } catch (e4) { alert('Could not delete: ' + (e4.message || e4)); }
+  };
+
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const monthTotal = receipts.filter(r => (r.date || r.createdAt || '').startsWith(monthKey)).reduce((s, r) => s + (parseFloat(r.total) || 0), 0);
+  const allTotal = receipts.reduce((s, r) => s + (parseFloat(r.total) || 0), 0);
+
+  const review = /*#__PURE__*/React.createElement(React.Fragment, null,
+    draft && draft.image && /*#__PURE__*/React.createElement('div', { style: { textAlign: 'center', marginBottom: 16 } },
+      /*#__PURE__*/React.createElement('img', { src: draft.image, style: { maxHeight: 220, maxWidth: '100%', borderRadius: 12, border: '1px solid var(--border)' } })),
+    /*#__PURE__*/React.createElement('div', { className: 'input-group' },
+      /*#__PURE__*/React.createElement('label', { className: 'input-label' }, 'Store'),
+      /*#__PURE__*/React.createElement('input', { className: 'input', value: draft ? draft.store : '', onChange: e => setD('store', e.target.value), placeholder: 'e.g. Princess Polly' })),
+    /*#__PURE__*/React.createElement('div', { style: { display: 'flex', gap: 12 } },
+      /*#__PURE__*/React.createElement('div', { className: 'input-group', style: { flex: 1 } },
+        /*#__PURE__*/React.createElement('label', { className: 'input-label' }, 'Date'),
+        /*#__PURE__*/React.createElement('input', { className: 'input', type: 'date', value: draft ? draft.date : '', onChange: e => setD('date', e.target.value) })),
+      /*#__PURE__*/React.createElement('div', { className: 'input-group', style: { flex: 1 } },
+        /*#__PURE__*/React.createElement('label', { className: 'input-label' }, 'Total'),
+        /*#__PURE__*/React.createElement('input', { className: 'input', type: 'number', inputMode: 'decimal', value: draft ? draft.total : '', onChange: e => setD('total', e.target.value), placeholder: '0.00' }))),
+    /*#__PURE__*/React.createElement('div', { className: 'input-group' },
+      /*#__PURE__*/React.createElement('label', { className: 'input-label' }, 'Category'),
+      /*#__PURE__*/React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
+        RECEIPT_CATEGORIES.map(c => /*#__PURE__*/React.createElement('button', { key: c, className: 'chip' + (draft && draft.category === c ? ' active' : ''), onClick: () => setD('category', c) }, c)))),
+    draft && draft.items && draft.items.length > 0 && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '10px 14px', marginBottom: 16 } },
+      /*#__PURE__*/React.createElement('div', { className: 'label', style: { marginBottom: 6 } }, 'Items'),
+      draft.items.slice(0, 25).map((it, idx) => /*#__PURE__*/React.createElement('div', { key: idx, style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', padding: '3px 0' } },
+        /*#__PURE__*/React.createElement('span', null, it.name || 'Item'),
+        /*#__PURE__*/React.createElement('span', { style: { color: 'var(--brown-light)' } }, (it.price != null && it.price !== '') ? ('$' + it.price) : '')))),
+    /*#__PURE__*/React.createElement('button', { className: 'btn-primary', style: { width: '100%', marginBottom: 10 }, onClick: saveDraft, disabled: busy }, busy ? 'Saving…' : 'Save Receipt'),
+    /*#__PURE__*/React.createElement('button', { className: 'btn-secondary', style: { width: '100%' }, onClick: () => { setStage('list'); setDraft(null); setErr(''); } }, 'Cancel')
+  );
+
+  const list = /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement('div', { className: 'card card-pink', style: { padding: '16px 18px', marginBottom: 16, display: 'flex', gap: 12 } },
+      /*#__PURE__*/React.createElement('div', { style: { flex: 1 } },
+        /*#__PURE__*/React.createElement('div', { className: 'label' }, 'This month'),
+        /*#__PURE__*/React.createElement('div', { style: { fontFamily: "'Cormorant Garamond',serif", fontSize: '1.8rem', fontWeight: 500 } }, '$' + monthTotal.toFixed(0))),
+      /*#__PURE__*/React.createElement('div', { style: { flex: 1 } },
+        /*#__PURE__*/React.createElement('div', { className: 'label' }, 'All-time'),
+        /*#__PURE__*/React.createElement('div', { style: { fontFamily: "'Cormorant Garamond',serif", fontSize: '1.8rem', fontWeight: 500 } }, '$' + allTotal.toFixed(0)))),
+    /*#__PURE__*/React.createElement('div', { style: { display: 'flex', gap: 10, marginBottom: 20 } },
+      /*#__PURE__*/React.createElement('button', { className: 'btn-primary', style: { flex: 1 }, disabled: busy, onClick: () => { if (fileRef.current) { fileRef.current.setAttribute('capture', 'environment'); fileRef.current.click(); } } }, '📷 Scan'),
+      /*#__PURE__*/React.createElement('button', { className: 'btn-secondary', style: { flex: 1 }, disabled: busy, onClick: () => { if (fileRef.current) { fileRef.current.removeAttribute('capture'); fileRef.current.click(); } } }, 'Upload')),
+    loading ? /*#__PURE__*/React.createElement('div', { className: 'caption', style: { textAlign: 'center', padding: 24 } }, 'Loading…')
+      : receipts.length === 0 ? /*#__PURE__*/React.createElement('div', { className: 'empty-state' },
+          /*#__PURE__*/React.createElement('div', { className: 'empty-icon' }, '🧾'),
+          /*#__PURE__*/React.createElement('div', { className: 'empty-title' }, 'No receipts yet'),
+          /*#__PURE__*/React.createElement('div', { className: 'empty-body' }, 'Scan or upload a receipt and STYLED will pull out the store, date, and total for you.'))
+      : /*#__PURE__*/React.createElement('div', null, receipts.map(r => /*#__PURE__*/React.createElement('div', { key: r.id, className: 'card', style: { padding: '12px', marginBottom: 10, display: 'flex', gap: 12, alignItems: 'center' } },
+          r.image ? /*#__PURE__*/React.createElement('img', { src: r.image, style: { width: 52, height: 52, borderRadius: 10, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' } })
+            : /*#__PURE__*/React.createElement('div', { style: { width: 52, height: 52, borderRadius: 10, background: 'var(--cream-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', flexShrink: 0 } }, '🧾'),
+          /*#__PURE__*/React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+            /*#__PURE__*/React.createElement('div', { style: { fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.store || 'Unknown store'),
+            /*#__PURE__*/React.createElement('div', { className: 'caption' }, (r.date || (r.createdAt || '').slice(0, 10)) + (r.category ? ' · ' + r.category : ''))),
+          /*#__PURE__*/React.createElement('div', { style: { textAlign: 'right', flexShrink: 0 } },
+            /*#__PURE__*/React.createElement('div', { style: { fontWeight: 600, fontSize: '0.95rem' } }, '$' + (parseFloat(r.total) || 0).toFixed(2)),
+            /*#__PURE__*/React.createElement('button', { className: 'btn-ghost', style: { fontSize: '0.7rem', color: 'var(--brown-light)', padding: '2px 4px' }, onClick: () => removeReceipt(r) }, 'Delete')))))
+  );
+
+  return /*#__PURE__*/React.createElement('div', { className: 'screen animate-in', style: { paddingTop: 56 } },
+    /*#__PURE__*/React.createElement('div', { style: { position: 'sticky', top: 0, zIndex: 90, background: 'rgba(250,247,242,0.95)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border-light)' } },
+      /*#__PURE__*/React.createElement('button', { className: 'btn-ghost', onClick: stage === 'review' ? () => { setStage('list'); setDraft(null); setErr(''); } : onBack },
+        /*#__PURE__*/React.createElement(Icon, { name: 'arrowLeft', size: 20, color: 'var(--brown-mid)' })),
+      /*#__PURE__*/React.createElement('span', { style: { fontWeight: 600, fontSize: '1rem', flex: 1 } }, stage === 'review' ? 'Review Receipt 🧾' : 'Receipts 🧾')),
+    /*#__PURE__*/React.createElement('input', { ref: fileRef, type: 'file', accept: 'image/*', style: { display: 'none' }, onChange: onPick }),
+    /*#__PURE__*/React.createElement('div', { className: 'px', style: { paddingTop: 16 } },
+      err && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '12px 14px', marginBottom: 14, background: 'var(--pink-pale)', border: '1px solid var(--pink-light)', color: 'var(--brown-dark)', fontSize: '0.84rem', lineHeight: 1.45 } }, err),
+      busy && /*#__PURE__*/React.createElement('div', { className: 'card', style: { padding: '18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 } },
+        /*#__PURE__*/React.createElement('div', { className: 'spinner' }),
+        /*#__PURE__*/React.createElement('span', { className: 'body-sm' }, stage === 'review' ? 'Saving…' : 'Reading your receipt…')),
+      (stage === 'review' && draft) ? review : list)
+  );
+};
+
 const App = () => {
   const [screen, setScreen] = useState('home');
   const [showNotifs, setShowNotifs] = useState(false);
@@ -7238,6 +7413,9 @@ const App = () => {
       onBack: () => setScreen('profile')
     }),
     spend: /*#__PURE__*/React.createElement(SpendTrackerScreen, {
+      onBack: () => setScreen('profile')
+    }),
+    receipts: /*#__PURE__*/React.createElement(ReceiptsScreen, {
       onBack: () => setScreen('profile')
     })
   };
