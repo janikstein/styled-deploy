@@ -166,12 +166,19 @@
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script type="module">
-    // @imgly/background-removal is an ES module (default export = removeBackground).
-    // Loading it as a classic <script> never created window.BackgroundRemoval, which
-    // is why background removal failed every time. Import it and expose it instead.
-    import removeBackground from "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm";
-    window.imglyRemoveBackground = removeBackground;
-    window.__imglyReady = true;
+    // @imgly/background-removal is an ES module. esm.sh serves it as a browser-ready
+    // bundle (with its worker/wasm deps) far more reliably than jsDelivr's +esm flattening.
+    // Warm it up on page load and record any load failure so the UI can report the real reason.
+    (async () => {
+      try {
+        const mod = await import("https://esm.sh/@imgly/background-removal@1.4.5");
+        window.imglyRemoveBackground = mod.default || mod.removeBackground;
+        window.__imglyReady = true;
+      } catch (e) {
+        window.__imglyError = (e && e.message) ? e.message : String(e);
+        console.error('[imgly preload failed]', e);
+      }
+    })();
   </script>
 </head>
 <body>
@@ -736,7 +743,7 @@ const callClaude = async (messages, systemPrompt = '', maxTokens = 800) => {
   return data.content?.[0]?.text || '';
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const APP_VERSION = 'v1.1 · 2026-06-18 · receipts';
+const APP_VERSION = 'v1.2 · 2026-06-18 · bg-loader';
 const getGreeting = () => {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -1065,8 +1072,20 @@ const AddItemModal = ({
     if (!imageDataURL || bgRemoving) return;
     setBgRemoving(true);
     try {
-      const removeBg = window.imglyRemoveBackground;
-      if (!removeBg) throw new Error('Still loading the background remover — give it a few seconds and tap again.');
+      let removeBg = window.imglyRemoveBackground;
+      if (typeof removeBg !== 'function') {
+        // Load it on demand if the page-load warm-up hasn't finished (or failed).
+        try {
+          const mod = await import('https://esm.sh/@imgly/background-removal@1.4.5');
+          removeBg = mod.default || mod.removeBackground;
+          window.imglyRemoveBackground = removeBg;
+        } catch (impErr) {
+          throw new Error('Could not load the background remover — ' + ((impErr && impErr.message) || impErr));
+        }
+      }
+      if (typeof removeBg !== 'function') {
+        throw new Error('Background remover unavailable' + (window.__imglyError ? (' — ' + window.__imglyError) : '. Check your connection and try again.'));
+      }
       const res = await fetch(imageDataURL);
       const blob = await res.blob();
       const resultBlob = await removeBg(blob, {
